@@ -1,1 +1,1 @@
-export const BKEND_URL =  'http://localhost:3000';
+export const BKEND_URL =  'https://golf-dh-delta.vercel.app';
