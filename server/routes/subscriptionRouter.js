@@ -3,7 +3,8 @@ import {
 	cancelSubscription,
 	createCheckoutSession,
 	createPortalSession,
-	getSubscriptionStatus
+	getSubscriptionStatus,
+	syncSubscriptionFromCheckout
 } from '../controllers/subscriptionController.js';
 import { authMiddleware } from '../middleware/index.js';
 
@@ -13,5 +14,6 @@ subscriptionRouter.post('/checkout', authMiddleware, createCheckoutSession);
 subscriptionRouter.get('/status', authMiddleware, getSubscriptionStatus);
 subscriptionRouter.post('/cancel', authMiddleware, cancelSubscription);
 subscriptionRouter.post('/portal', authMiddleware, createPortalSession);
+subscriptionRouter.post('/sync', authMiddleware, syncSubscriptionFromCheckout);
 
 export default subscriptionRouter;

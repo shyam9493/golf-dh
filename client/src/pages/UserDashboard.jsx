@@ -5,7 +5,7 @@ import { AuthContext } from '../context/AuthContext.jsx';
 import { BKEND_URL } from '../config.js';
 
 export default function UserDashboard() {
-  const { token, user, logout } = useContext(AuthContext);
+  const { token, user, logout, loading: authLoading } = useContext(AuthContext);
   const navigate = useNavigate();
 
   const [profile, setProfile] = useState(null);
@@ -25,6 +25,7 @@ export default function UserDashboard() {
 
   const [alert, setAlert] = useState('');
   const [error, setError] = useState('');
+  const [errorToast, setErrorToast] = useState('');
   const [loading, setLoading] = useState(true);
 
   const [newScore, setNewScore] = useState('');
@@ -39,12 +40,25 @@ export default function UserDashboard() {
   const [proofForm, setProofForm] = useState({ draw_id: '', match_type: '3_match', proof_url: '' });
 
   useEffect(() => {
+    if (authLoading) {
+      return;
+    }
     if (!token) {
       navigate('/login');
       return;
     }
     loadAll();
-  }, [token]);
+  }, [authLoading, token]);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    setErrorToast(error);
+    const timer = setTimeout(() => setErrorToast(''), 3200);
+    return () => clearTimeout(timer);
+  }, [error]);
 
   const authHeaders = useMemo(
     () => ({ headers: { Authorization: `Bearer ${token}` } }),
@@ -267,6 +281,12 @@ export default function UserDashboard() {
 
   return (
     <main className="min-h-screen bg-[#eef0f2] text-[#1e2530] pb-10">
+      {errorToast && (
+        <div className="fixed right-4 top-4 z-50 max-w-sm rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-lg">
+          {errorToast}
+        </div>
+      )}
+
       <header className="sticky top-0 z-40 bg-[#0b4a51] text-white">
         <section className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 md:px-6">
           <div>

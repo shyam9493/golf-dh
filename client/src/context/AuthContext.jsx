@@ -6,20 +6,17 @@ export const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);
+  const [token, setToken] = useState(() => localStorage.getItem('authToken'));
   const [loading, setLoading] = useState(true);
 
-  // Load token from localStorage on mount
+  // Rehydrate the authenticated user when a token is available.
   useEffect(() => {
-    const storedToken = localStorage.getItem('authToken');
-    if (storedToken) {
-      setToken(storedToken);
-      // Optionally fetch user profile
-      fetchUserProfile(storedToken);
+    if (token) {
+      fetchUserProfile(token);
     } else {
       setLoading(false);
     }
-  }, []);
+  }, [token]);
 
   const fetchUserProfile = async (authToken) => {
     try {
@@ -29,9 +26,12 @@ export function AuthProvider({ children }) {
       setUser(response.data);
     } catch (err) {
       console.error('Failed to fetch user profile:', err);
-      // Token may be invalid, clear it
-      localStorage.removeItem('authToken');
-      setToken(null);
+      if (err?.response?.status === 401) {
+        // Only clear auth for invalid/expired tokens.
+        localStorage.removeItem('authToken');
+        setToken(null);
+        setUser(null);
+      }
     } finally {
       setLoading(false);
     }

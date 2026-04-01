@@ -94,6 +94,13 @@ const buildAbsoluteUrl = (candidate, fallbackPath, baseUrl) => {
 	return `${baseUrl}${fallbackPath}`;
 };
 
+const appendSessionIdPlaceholder = (url) => {
+	if (!url) return url;
+	if (url.includes('{CHECKOUT_SESSION_ID}')) return url;
+	const separator = url.includes('?') ? '&' : '?';
+	return `${url}${separator}session_id={CHECKOUT_SESSION_ID}`;
+};
+
 export const createCheckoutSession = async (req, res) => {
 	const userId = req.user.userId;
 	const { plan = 'monthly', priceId, success_url, cancel_url } = req.body;
@@ -103,6 +110,7 @@ export const createCheckoutSession = async (req, res) => {
 		'/subscription/success',
 		clientBaseUrl
 	);
+	const successUrlWithSessionId = appendSessionIdPlaceholder(resolvedSuccessUrl);
 	const resolvedCancelUrl = buildAbsoluteUrl(
 		cancel_url || process.env.STRIPE_CHECKOUT_CANCEL_URL,
 		'/subscription/cancel',
@@ -146,7 +154,7 @@ export const createCheckoutSession = async (req, res) => {
 			mode: 'subscription',
 			customer: customerId,
 			line_items: lineItems,
-			success_url: resolvedSuccessUrl,
+			success_url: successUrlWithSessionId,
 			cancel_url: resolvedCancelUrl,
 			metadata: {
 				userId: String(userId),
@@ -162,6 +170,64 @@ export const createCheckoutSession = async (req, res) => {
 	} catch (err) {
 		console.error(err);
 		return res.status(500).json({ message: 'Server error.' });
+	}
+};
+
+export const syncSubscriptionFromCheckout = async (req, res) => {
+	const userId = req.user.userId;
+	const sessionId = (req.query.session_id || req.body?.session_id || '').toString().trim();
+
+	if (!sessionId || !/^cs_/.test(sessionId)) {
+		return res.status(400).json({ message: 'Valid Stripe checkout session_id is required.' });
+	}
+
+	try {
+		const [userResult, session] = await Promise.all([
+			query('SELECT id, email FROM users WHERE id = $1 LIMIT 1', [userId]),
+			stripe.checkout.sessions.retrieve(sessionId, { expand: ['subscription'] })
+		]);
+
+		if (userResult.rows.length === 0) {
+			return res.status(404).json({ message: 'User not found.' });
+		}
+
+		const user = userResult.rows[0];
+		const sessionUserId = Number(session.metadata?.userId || 0);
+		const sameUser = sessionUserId === Number(userId) || (session.customer_email && session.customer_email === user.email);
+
+		if (!sameUser) {
+			return res.status(403).json({ message: 'Checkout session does not belong to this user.' });
+		}
+
+		if (!session.subscription) {
+			return res.status(400).json({ message: 'No Stripe subscription found for checkout session.' });
+		}
+
+		const stripeSubscription =
+			typeof session.subscription === 'string'
+				? await stripe.subscriptions.retrieve(session.subscription)
+				: session.subscription;
+
+		await upsertSubscriptionFromStripe({
+			userId,
+			stripeSubId: stripeSubscription.id,
+			stripeCustomerId: stripeSubscription.customer,
+			plan: session.metadata?.plan || 'monthly',
+			status: mapStripeSubStatus(stripeSubscription.status),
+			amountPence: stripeSubscription.items.data[0]?.price?.unit_amount || null,
+			currentPeriodEnd: stripeSubscription.current_period_end
+				? new Date(stripeSubscription.current_period_end * 1000)
+				: null,
+			canceledAt: stripeSubscription.canceled_at ? new Date(stripeSubscription.canceled_at * 1000) : null
+		});
+
+		return res.json({
+			message: 'Subscription synced from checkout session.',
+			subscribed: mapStripeSubStatus(stripeSubscription.status) === 'active'
+		});
+	} catch (err) {
+		console.error('Checkout session sync failed:', err);
+		return res.status(500).json({ message: 'Failed to sync subscription from checkout session.' });
 	}
 };
 
