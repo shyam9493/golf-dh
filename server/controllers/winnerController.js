@@ -15,12 +15,28 @@ export const uploadProof = async (req, res) => {
 
     try {
         const existingWinner = await query(
-            'SELECT id FROM winners WHERE user_id = $1 AND draw_id = $2',
+            `SELECT id, verify_status, payout_status
+             FROM winners
+             WHERE user_id = $1 AND draw_id = $2`,
             [userId, draw_id]
         );
 
         if (existingWinner.rows.length > 0) {
-            return res.status(400).json({ message: 'Winner claim already exists for this draw.' });
+            const updated = await query(
+                `UPDATE winners
+                 SET match_type = $1,
+                     proof_url = $2,
+                     verify_status = 'pending',
+                     payout_status = CASE WHEN payout_status = 'paid' THEN 'paid' ELSE 'pending' END
+                 WHERE id = $3
+                 RETURNING id, draw_id, user_id, match_type, prize_pence, verify_status, proof_url, payout_status`,
+                [match_type, proof_url || null, existingWinner.rows[0].id]
+            );
+
+            return res.status(200).json({
+                message: 'Proof updated successfully. Awaiting verification.',
+                winner: updated.rows[0]
+            });
         }
 
         const drawExists = await query('SELECT id FROM draws WHERE id = $1', [draw_id]);

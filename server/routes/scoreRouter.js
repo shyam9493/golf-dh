@@ -1,6 +1,6 @@
 import express from 'express';
 import { authMiddleware,subsMiddleware,adminMiddleware } from '../middleware/index.js';
-import { getScores,addScore,updateScore,deleteScore,editscorebyadmin } from '../controllers/scoreController.js';
+import { getScores,addScore,updateScore,deleteScore,editscorebyadmin,listScoresByUserAdmin } from '../controllers/scoreController.js';
 
 const scoreRouter = express.Router();
 
@@ -12,6 +12,7 @@ scoreRouter.delete("/:scoreId", [authMiddleware,subsMiddleware], deleteScore);
 
 
 // AAdmin Routes
+scoreRouter.get('/admin/user/:userId', [authMiddleware,adminMiddleware], listScoresByUserAdmin);
 scoreRouter.put("/admin/:scoreId", [authMiddleware,adminMiddleware] ,editscorebyadmin);
 
 

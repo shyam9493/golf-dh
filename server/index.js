@@ -42,7 +42,7 @@ app.use("/draws", drawRouter);
 app.use("/charities", charityRouter);
 app.use("/winners", winnerRouter);
 app.use("/admin", adminRouter);
-app.use("/api/subscriptions", subscriptionRouter);
+app.use("/subscriptions", subscriptionRouter);
 
 app.get("/", (req, res) => {
   res.send("Hello World!");

@@ -6,6 +6,15 @@ dotenv.config();
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
+const isStripePriceId = (value) => typeof value === 'string' && /^price_/.test(value.trim());
+
+const parseAmountToMinorUnits = (value) => {
+	if (value === undefined || value === null || value === '') return null;
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed) || parsed <= 0) return null;
+	return Math.round(parsed);
+};
+
 const mapPlanToPriceId = (plan, explicitPriceId) => {
 	if (explicitPriceId) {
 		return explicitPriceId;
@@ -22,6 +31,34 @@ const mapPlanToPriceId = (plan, explicitPriceId) => {
 	return null;
 };
 
+const buildCheckoutLineItem = (plan, resolvedPriceOrAmount) => {
+	if (isStripePriceId(resolvedPriceOrAmount)) {
+		return [{ price: resolvedPriceOrAmount.trim(), quantity: 1 }];
+	}
+
+	const amount = parseAmountToMinorUnits(resolvedPriceOrAmount);
+	if (!amount) {
+		return null;
+	}
+
+	const interval = plan === 'yearly' ? 'year' : 'month';
+	const currency = (process.env.STRIPE_CURRENCY || 'gbp').toLowerCase();
+
+	return [
+		{
+			quantity: 1,
+			price_data: {
+				currency,
+				unit_amount: amount,
+				recurring: { interval },
+				product_data: {
+					name: `GolFMaster ${plan === 'yearly' ? 'Yearly' : 'Monthly'} Subscription`
+				}
+			}
+		}
+	];
+};
+
 const mapStripeSubStatus = (status) => {
 	if (status === 'active' || status === 'trialing') {
 		return 'active';
@@ -32,9 +69,45 @@ const mapStripeSubStatus = (status) => {
 	return 'lapsed';
 };
 
+const getBaseClientUrl = (req) => {
+	const originHeader = req.headers.origin;
+	if (originHeader && /^https?:\/\//.test(originHeader)) {
+		return originHeader;
+	}
+
+	if (process.env.FRONTEND_URL && /^https?:\/\//.test(process.env.FRONTEND_URL)) {
+		return process.env.FRONTEND_URL;
+	}
+
+	return 'http://localhost:5173';
+};
+
+const buildAbsoluteUrl = (candidate, fallbackPath, baseUrl) => {
+	if (candidate && /^https?:\/\//.test(candidate)) {
+		return candidate;
+	}
+
+	if (candidate && candidate.startsWith('/')) {
+		return `${baseUrl}${candidate}`;
+	}
+
+	return `${baseUrl}${fallbackPath}`;
+};
+
 export const createCheckoutSession = async (req, res) => {
 	const userId = req.user.userId;
 	const { plan = 'monthly', priceId, success_url, cancel_url } = req.body;
+	const clientBaseUrl = getBaseClientUrl(req);
+	const resolvedSuccessUrl = buildAbsoluteUrl(
+		success_url || process.env.STRIPE_CHECKOUT_SUCCESS_URL,
+		'/subscription/success',
+		clientBaseUrl
+	);
+	const resolvedCancelUrl = buildAbsoluteUrl(
+		cancel_url || process.env.STRIPE_CHECKOUT_CANCEL_URL,
+		'/subscription/cancel',
+		clientBaseUrl
+	);
 
 	try {
 		const userResult = await query(
@@ -50,10 +123,14 @@ export const createCheckoutSession = async (req, res) => {
 		}
 
 		const user = userResult.rows[0];
-		const resolvedPriceId = mapPlanToPriceId(plan, priceId);
+		const resolvedPriceOrAmount = mapPlanToPriceId(plan, priceId);
+		const lineItems = buildCheckoutLineItem(plan, resolvedPriceOrAmount);
 
-		if (!resolvedPriceId) {
-			return res.status(400).json({ message: 'Valid plan or priceId is required.' });
+		if (!lineItems) {
+			return res.status(400).json({
+				message:
+					'Provide a valid Stripe price ID (price_...) or a positive numeric amount in STRIPE_PRICE_MONTHLY / STRIPE_PRICE_YEARLY.'
+			});
 		}
 
 		let customerId = user.stripe_customer_id;
@@ -68,9 +145,9 @@ export const createCheckoutSession = async (req, res) => {
 		const session = await stripe.checkout.sessions.create({
 			mode: 'subscription',
 			customer: customerId,
-			line_items: [{ price: resolvedPriceId, quantity: 1 }],
-			success_url: success_url || process.env.STRIPE_CHECKOUT_SUCCESS_URL,
-			cancel_url: cancel_url || process.env.STRIPE_CHECKOUT_CANCEL_URL,
+			line_items: lineItems,
+			success_url: resolvedSuccessUrl,
+			cancel_url: resolvedCancelUrl,
 			metadata: {
 				userId: String(userId),
 				plan
@@ -156,6 +233,12 @@ export const cancelSubscription = async (req, res) => {
 export const createPortalSession = async (req, res) => {
 	const userId = req.user.userId;
 	const { return_url } = req.body;
+	const clientBaseUrl = getBaseClientUrl(req);
+	const resolvedReturnUrl = buildAbsoluteUrl(
+		return_url || process.env.STRIPE_PORTAL_RETURN_URL,
+		'/dashboard',
+		clientBaseUrl
+	);
 
 	try {
 		const current = await query(
@@ -173,7 +256,7 @@ export const createPortalSession = async (req, res) => {
 
 		const portalSession = await stripe.billingPortal.sessions.create({
 			customer: current.rows[0].stripe_customer_id,
-			return_url: return_url || process.env.STRIPE_PORTAL_RETURN_URL
+			return_url: resolvedReturnUrl
 		});
 
 		return res.status(201).json({

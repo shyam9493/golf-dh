@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import { sendEmail } from '../services/mailer.js';
+import { query } from '../services/database.js';
 
 dotenv.config();
 
